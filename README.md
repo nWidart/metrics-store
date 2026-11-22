@@ -2,9 +2,11 @@
 
 Cross-process aggregation for OpenTelemetry metrics in shared-nothing PHP runtimes such as PHP-FPM.
 
-> **Status:** early development. Not usable yet.
+```bash
+composer require nwidart/metrics-store
+```
 
-Under PHP-FPM, each request merges its OpenTelemetry metrics into a shared store. An exporter reads the cumulative values from the store and sends them with the standard OpenTelemetry exporters. Read the [design](../../docs/design.md).
+Under PHP-FPM, each request merges its OpenTelemetry metrics into a shared store. An exporter reads the cumulative values from the store and sends them with the standard OpenTelemetry exporters. Read the [design](https://github.com/nWidart/observability/blob/main/docs/design.md). For Laravel, use [`nwidart/laravel-metrics`](https://github.com/nWidart/laravel-metrics), which wires all of it.
 
 ## Requirements
 
