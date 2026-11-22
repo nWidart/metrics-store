@@ -1,4 +1,4 @@
-# Metrics Store
+<img src="https://raw.githubusercontent.com/nWidart/metrics-store/main/.github/art/banner.png" alt="Metrics Store" width="100%">
 
 [![CI](https://github.com/nWidart/metrics-store/actions/workflows/ci.yml/badge.svg)](https://github.com/nWidart/metrics-store/actions/workflows/ci.yml)
 [![Latest version](https://img.shields.io/packagist/v/nwidart/metrics-store)](https://packagist.org/packages/nwidart/metrics-store)
