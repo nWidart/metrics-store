@@ -8,8 +8,8 @@ use OpenTelemetry\API\Behavior\LogsMessagesTrait;
 use OpenTelemetry\SDK\Metrics\AggregationTemporalitySelectorInterface;
 use OpenTelemetry\SDK\Metrics\Data\Temporality;
 use OpenTelemetry\SDK\Metrics\InstrumentType;
-use OpenTelemetry\SDK\Metrics\MetricExporterInterface;
 use OpenTelemetry\SDK\Metrics\MetricMetadataInterface;
+use OpenTelemetry\SDK\Metrics\PushMetricExporterInterface;
 use Throwable;
 
 /**
@@ -19,8 +19,11 @@ use Throwable;
  * Observable instruments are not exported. Their callbacks report a current value, not what the
  * request added, so merging them would add the full value on every request. They belong in the
  * export process, which reads the store; the SDK then never runs their callbacks in a request.
+ *
+ * It is a push exporter, so that MeterProvider::forceFlush() merges too, not only shutdown():
+ * a long-running process (queue worker, Octane) flushes many times with one provider.
  */
-final class StoreExporter implements AggregationTemporalitySelectorInterface, MetricExporterInterface
+final class StoreExporter implements AggregationTemporalitySelectorInterface, PushMetricExporterInterface
 {
     use LogsMessagesTrait;
 
@@ -50,6 +53,12 @@ final class StoreExporter implements AggregationTemporalitySelectorInterface, Me
     }
 
     public function shutdown(): bool
+    {
+        return true;
+    }
+
+    /** Every export merges at once; nothing is buffered. */
+    public function forceFlush(): bool
     {
         return true;
     }

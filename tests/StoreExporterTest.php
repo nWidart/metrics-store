@@ -7,6 +7,7 @@ namespace Nwidart\MetricsStore\Tests;
 use Nwidart\MetricsStore\Redis\PredisClient;
 use Nwidart\MetricsStore\RedisStore;
 use Nwidart\MetricsStore\StoreExporter;
+use OpenTelemetry\SDK\Metrics\Data\Sum;
 use OpenTelemetry\SDK\Metrics\Data\Temporality;
 use OpenTelemetry\SDK\Metrics\InstrumentType;
 use OpenTelemetry\SDK\Metrics\MeterProviderBuilder;
@@ -15,6 +16,7 @@ use OpenTelemetry\SDK\Metrics\MetricReader\ExportingReader;
 use OpenTelemetry\SDK\Resource\ResourceInfoFactory;
 use PHPUnit\Framework\TestCase;
 use Predis\Client;
+use Predis\Connection\ConnectionException;
 
 final class StoreExporterTest extends TestCase
 {
@@ -31,6 +33,33 @@ final class StoreExporterTest extends TestCase
         $provider->getMeter('test')->createCounter('requests')->add(1);
 
         self::assertFalse($provider->shutdown());
+    }
+
+    public function test_force_flush_merges_and_the_next_flush_adds_only_the_new_delta(): void
+    {
+        $client = new Client(['host' => getenv('REDIS_HOST') ?: '127.0.0.1', 'port' => (int) (getenv('REDIS_PORT') ?: 6379), 'database' => 15, 'timeout' => 0.5]);
+        try {
+            $client->ping();
+        } catch (ConnectionException) {
+            self::markTestSkipped('Redis is not reachable. Run `docker compose up -d redis`.');
+        }
+        $store = new RedisStore(new PredisClient($client), '{exporter-test}:');
+        $store->clear();
+        $provider = (new MeterProviderBuilder)
+            ->setResource(ResourceInfoFactory::emptyResource())
+            ->addReader(new ExportingReader(new StoreExporter($store)))
+            ->build();
+        $counter = $provider->getMeter('test')->createCounter('jobs');
+
+        $counter->add(3);
+        self::assertTrue($provider->forceFlush());
+        $counter->add(2);
+        self::assertTrue($provider->forceFlush());
+
+        $data = $store->collect(ResourceInfoFactory::emptyResource())[0]->data;
+        $store->clear();
+        self::assertInstanceOf(Sum::class, $data);
+        self::assertSame(5, $data->dataPoints[0]->value);
     }
 
     public function test_an_empty_batch_needs_no_redis(): void
