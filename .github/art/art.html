@@ -1,0 +1,186 @@
+<!doctype html>
+<!--
+  Source of the README banner (banner.png) and the GitHub social preview (social-preview.png).
+  Render both with: npx -y -p playwright-core node render.cjs
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #1e1b4b;
+    --bg-deep: #13112f;
+    --ink: #ffffff;
+    --ink-soft: #c7d2fe;
+    --ink-muted: #8b8fd6;
+    --i300: #a5b4fc;
+    --i400: #818cf8;
+    --i500: #6366f1;
+    --line: rgba(165, 180, 252, 0.12);
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+    --mono: "SF Mono", ui-monospace, Menlo, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: transparent; width: 100%; height: 100%; overflow: hidden; }
+  .card {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(900px 500px at 85% 20%, rgba(99, 102, 241, 0.35), transparent 60%),
+      radial-gradient(700px 400px at 0% 100%, rgba(129, 140, 248, 0.12), transparent 60%),
+      linear-gradient(160deg, var(--bg) 0%, var(--bg-deep) 100%);
+    color: var(--ink);
+    font-family: var(--sans);
+    overflow: hidden;
+  }
+  .banner .card { border-radius: 24px; }
+  .grid {
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(var(--line) 1px, transparent 1px),
+      linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 40px 40px;
+    mask-image: linear-gradient(90deg, transparent 0%, #000 55%, #000 100%);
+    opacity: 0.6;
+  }
+  .text { position: absolute; z-index: 2; }
+  .title { display: flex; align-items: center; font-weight: 700; letter-spacing: -0.03em; }
+  .title svg { flex: none; }
+  .tagline { white-space: pre-line; color: var(--ink-soft); line-height: 1.35; letter-spacing: -0.01em; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 0.7em;
+    font-family: var(--mono); color: var(--ink-soft);
+    background: rgba(19, 17, 47, 0.7);
+    border: 1px solid rgba(165, 180, 252, 0.22);
+    border-radius: 10px;
+  }
+  .chip b { color: var(--i400); font-weight: 600; }
+  .features { display: flex; flex-wrap: wrap; color: var(--i300); font-weight: 500; }
+  .features span { display: inline-flex; align-items: center; }
+  .features span + span::before {
+    content: ""; display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+    background: var(--i500); margin: 0 0.75em;
+  }
+  .repo { font-family: var(--mono); color: var(--ink-muted); }
+  #chart { position: absolute; z-index: 1; }
+
+  /* Banner: 1280 x 400 */
+  .banner .text { left: 72px; top: 0; bottom: 0; width: 640px; display: flex; flex-direction: column; justify-content: center; }
+  .banner .title { font-size: 64px; gap: 22px; }
+  .banner .title svg { width: 64px; height: 64px; }
+  .banner .tagline { font-size: 25px; margin-top: 18px; max-width: 600px; }
+  .banner .chip { font-size: 17px; padding: 11px 16px; margin-top: 30px; align-self: flex-start; }
+  .banner #chart { right: 0; top: 0; width: 600px; height: 400px; }
+
+  /* Social preview: 1280 x 640 */
+  .social .text { left: 88px; top: 92px; width: 1100px; }
+  .social .title { font-size: 84px; gap: 28px; }
+  .social .title svg { width: 84px; height: 84px; }
+  .social .tagline { font-size: 34px; margin-top: 26px; max-width: 900px; }
+  .social .features { font-size: 24px; margin-top: 34px; }
+  .social .repo { position: absolute; left: 88px; bottom: 56px; font-size: 22px; z-index: 2; }
+  .social #chart { left: 0; right: 0; bottom: 0; width: 1280px; height: 300px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="grid"></div>
+  <svg id="chart"></svg>
+  <div class="text">
+    <div class="title">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="6" fill="#312e81"/><rect x="6" y="17" width="5" height="9" rx="1" fill="#a5b4fc"/><rect x="13.5" y="11" width="5" height="15" rx="1" fill="#818cf8"/><rect x="21" y="6" width="5" height="20" rx="1" fill="#6366f1"/></svg>
+      <span id="name"></span>
+    </div>
+    <p class="tagline" id="tagline"></p>
+    <div class="chip" id="chip"><b>$</b><span id="install"></span></div>
+    <div class="features" id="features"></div>
+  </div>
+  <div class="repo" id="repo"></div>
+</div>
+<script>
+  const packages = {
+    'laravel-metrics': {
+      name: 'Laravel Metrics',
+      tagline: 'OpenTelemetry metrics for Laravel\nthat work under PHP\u2011FPM.',
+      features: ['HTTP', 'Queries', 'Queues', 'Cache', 'Scheduler', 'Exceptions'],
+      seed: 7,
+    },
+    'metrics-store': {
+      name: 'Metrics Store',
+      tagline: 'Cross-process aggregation for\nOpenTelemetry metrics under PHP\u2011FPM.',
+      features: ['Redis', 'One round trip', 'Prometheus', 'OTLP'],
+      seed: 11,
+    },
+  };
+  const params = new URLSearchParams(location.search);
+  const pkg = params.get('pkg') || 'laravel-metrics';
+  const kind = params.get('kind') || 'banner';
+  const p = packages[pkg];
+  document.body.classList.add(kind);
+  document.title = p.name;
+  document.getElementById('name').textContent = p.name;
+  document.getElementById('tagline').textContent = p.tagline;
+  document.getElementById('install').textContent = 'composer require nwidart/' + pkg;
+  if (kind === 'social') {
+    document.getElementById('chip').remove();
+    document.getElementById('repo').textContent = 'github.com/nWidart/' + pkg;
+    document.getElementById('features').innerHTML = p.features.map(f => `<span>${f}</span>`).join('');
+  }
+
+  // The picture: many small per-request deltas (ticks) merge into one cumulative series (line).
+  let s = p.seed;
+  const rand = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  const svg = document.getElementById('chart');
+  const W = svg.clientWidth, H = svg.clientHeight;
+  const banner = kind === 'banner';
+  const x0 = banner ? 40 : 640, x1 = W - (banner ? 56 : 88);
+  const base = H - (banner ? 70 : 64), ceil = banner ? 70 : 40;
+  const n = banner ? 64 : 72;
+  const deltas = Array.from({ length: n }, (_, i) => 0.35 + rand() * (0.6 + 0.9 * Math.sin(i / n * Math.PI * 1.4) ** 2));
+  let sum = 0;
+  const cum = deltas.map(d => (sum += d));
+  const step = (x1 - x0) / (n - 1);
+  const X = i => x0 + i * step;
+  const Y = v => base - (v / sum) * (base - ceil);
+  const tickMax = banner ? 30 : 26;
+  const dMax = Math.max(...deltas);
+
+  let path = `M ${X(0)} ${Y(cum[0])}`;
+  for (let i = 1; i < n; i++) path += ` L ${X(i)} ${Y(cum[i - 1])} L ${X(i)} ${Y(cum[i])}`;
+  const area = `${path} L ${X(n - 1)} ${base} L ${X(0)} ${base} Z`;
+  const ticks = deltas.map((d, i) => {
+    const h = 4 + (d / dMax) * tickMax;
+    const o = (0.25 + 0.55 * (i / n)).toFixed(2);
+    return `<rect x="${X(i) - 1.5}" y="${base + 12}" width="3" height="${h}" rx="1.5" fill="#818cf8" opacity="${o}"/>`;
+  }).join('');
+  const ex = X(n - 1), ey = Y(sum);
+
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = `
+    <defs>
+      <linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#6366f1" stop-opacity="0.45"/>
+        <stop offset="1" stop-color="#6366f1" stop-opacity="0"/>
+      </linearGradient>
+      <linearGradient id="stroke" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="#6366f1" stop-opacity="0.2"/>
+        <stop offset="0.5" stop-color="#818cf8"/>
+        <stop offset="1" stop-color="#c7d2fe"/>
+      </linearGradient>
+      <linearGradient id="fade" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="#fff" stop-opacity="0"/>
+        <stop offset="0.25" stop-color="#fff" stop-opacity="1"/>
+      </linearGradient>
+      <mask id="m"><rect width="${W}" height="${H}" fill="url(#fade)"/></mask>
+      <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="6"/></filter>
+    </defs>
+    <g mask="url(#m)">
+      <path d="${area}" fill="url(#fill)"/>
+      <path d="${path}" fill="none" stroke="url(#stroke)" stroke-width="3" stroke-linejoin="round"/>
+      ${ticks}
+    </g>
+    <circle cx="${ex}" cy="${ey}" r="14" fill="#a5b4fc" opacity="0.6" filter="url(#glow)"/>
+    <circle cx="${ex}" cy="${ey}" r="6" fill="#ffffff"/>
+  `;
+</script>
+</body>
+</html>
