@@ -1,0 +1,44 @@
+{
+    "name": "nwidart/metrics-store",
+    "description": "Cross-process aggregation for OpenTelemetry metrics in shared-nothing PHP runtimes such as PHP-FPM.",
+    "keywords": [
+        "opentelemetry",
+        "metrics",
+        "php-fpm",
+        "prometheus",
+        "otlp",
+        "redis"
+    ],
+    "homepage": "https://github.com/nwidart/observability",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Nicolas Widart",
+            "email": "n.widart@gmail.com",
+            "homepage": "https://nwidart.com"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "open-telemetry/api": "^1.12",
+        "open-telemetry/sdk": "^1.17"
+    },
+    "suggest": {
+        "ext-redis": "Required by the Redis store when using the phpredis client.",
+        "predis/predis": "Required by the Redis store when using the predis client."
+    },
+    "autoload": {
+        "psr-4": {
+            "Nwidart\\MetricsStore\\": "src"
+        }
+    },
+    "config": {
+        "allow-plugins": {
+            "php-http/discovery": true,
+            "tbachert/spi": true
+        },
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
