@@ -27,7 +27,7 @@ final class StoreExporter implements AggregationTemporalitySelectorInterface, Pu
 {
     use LogsMessagesTrait;
 
-    public function __construct(private readonly RedisStore $store) {}
+    public function __construct(private readonly MetricStore $store) {}
 
     public function temporality(MetricMetadataInterface $metric): ?string
     {

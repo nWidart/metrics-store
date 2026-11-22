@@ -37,7 +37,7 @@ use UnexpectedValueException;
  *
  * @phpstan-type MetaArray array{name: string, unit: ?string, description: ?string, kind: string, monotonic: bool, bounds: list<float>, scope: array{name: string, version: ?string, schemaUrl: ?string}}
  */
-final class RedisStore
+final class RedisStore implements MetricStore
 {
     private const OVERFLOW_KEY = 'overflow';
 
