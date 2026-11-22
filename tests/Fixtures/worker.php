@@ -14,7 +14,8 @@ use OpenTelemetry\SDK\Metrics\MetricReader\ExportingReader;
 use OpenTelemetry\SDK\Resource\ResourceInfoFactory;
 use Predis\Client;
 
-require __DIR__.'/../../../../vendor/autoload.php';
+// The package's own vendor/, or the one of a workspace that holds the package under packages/.
+require is_file(__DIR__.'/../../vendor/autoload.php') ? __DIR__.'/../../vendor/autoload.php' : __DIR__.'/../../../../vendor/autoload.php';
 
 [, $clientName, $host, $port, $prefix, $requests] = $argv;
 

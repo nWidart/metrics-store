@@ -6,7 +6,7 @@ Cross-process aggregation for OpenTelemetry metrics in shared-nothing PHP runtim
 composer require nwidart/metrics-store
 ```
 
-Under PHP-FPM, each request merges its OpenTelemetry metrics into a shared store. An exporter reads the cumulative values from the store and sends them with the standard OpenTelemetry exporters. Read the [design](https://github.com/nWidart/observability/blob/main/docs/design.md). For Laravel, use [`nwidart/laravel-metrics`](https://github.com/nWidart/laravel-metrics), which wires all of it.
+Under PHP-FPM, each request merges its OpenTelemetry metrics into a shared store. An exporter reads the cumulative values from the store and sends them with the standard OpenTelemetry exporters. Read the [design](docs/design.md). For Laravel, use [`nwidart/laravel-metrics`](https://github.com/nWidart/laravel-metrics), which wires all of it.
 
 ## Requirements
 
@@ -28,3 +28,18 @@ Every store implements `MetricStore` (`merge`, `collect`, `clear`) with the same
 $text = (new PrometheusTextFormat)->render($store->collect(ResourceInfoFactory::emptyResource()), ['service' => 'shop']);
 // Serve $text with the header Content-Type: PrometheusTextFormat::CONTENT_TYPE
 ```
+
+## Development
+
+Requirements: PHP 8.2 or later, Composer, and a Redis server for the store tests.
+
+```bash
+composer install
+docker run -d --name metrics-store-redis -p 6379:6379 redis:7.4-alpine
+composer test
+composer lint
+composer analyse
+```
+
+The tests use Redis database 15. Set `REDIS_HOST` and `REDIS_PORT` to use another server. The phpredis tests run when `ext-redis` is loaded; the predis tests always run.
+
