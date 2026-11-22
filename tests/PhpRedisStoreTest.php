@@ -31,6 +31,16 @@ final class PhpRedisStoreTest extends RedisStoreTest
         return new PhpRedisClient($redis);
     }
 
+    protected function prefixedClient(string $prefix): RedisClient
+    {
+        $redis = new Redis;
+        $redis->connect(self::host(), self::port(), 0.5);
+        $redis->select(15);
+        $redis->setOption(Redis::OPT_PREFIX, $prefix);
+
+        return new PhpRedisClient($redis);
+    }
+
     protected function clientName(): string
     {
         return 'phpredis';

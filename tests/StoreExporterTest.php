@@ -8,6 +8,7 @@ use Nwidart\MetricsStore\Redis\PredisClient;
 use Nwidart\MetricsStore\RedisStore;
 use Nwidart\MetricsStore\StoreExporter;
 use OpenTelemetry\SDK\Metrics\Data\Temporality;
+use OpenTelemetry\SDK\Metrics\InstrumentType;
 use OpenTelemetry\SDK\Metrics\MeterProviderBuilder;
 use OpenTelemetry\SDK\Metrics\MetricMetadataInterface;
 use OpenTelemetry\SDK\Metrics\MetricReader\ExportingReader;
@@ -39,10 +40,29 @@ final class StoreExporterTest extends TestCase
         self::assertTrue((new StoreExporter($store))->export([]));
     }
 
-    public function test_every_metric_uses_delta_temporality(): void
+    public function test_synchronous_instruments_use_delta_temporality(): void
     {
         $exporter = new StoreExporter(new RedisStore(new PredisClient(new Client)));
 
-        self::assertSame(Temporality::DELTA, $exporter->temporality(self::createStub(MetricMetadataInterface::class)));
+        foreach ([InstrumentType::COUNTER, InstrumentType::UP_DOWN_COUNTER, InstrumentType::HISTOGRAM, InstrumentType::GAUGE] as $type) {
+            self::assertSame(Temporality::DELTA, $exporter->temporality(self::metadata($type)), $type);
+        }
+    }
+
+    public function test_observable_instruments_are_not_exported(): void
+    {
+        $exporter = new StoreExporter(new RedisStore(new PredisClient(new Client)));
+
+        foreach ([InstrumentType::ASYNCHRONOUS_COUNTER, InstrumentType::ASYNCHRONOUS_UP_DOWN_COUNTER, InstrumentType::ASYNCHRONOUS_GAUGE] as $type) {
+            self::assertNull($exporter->temporality(self::metadata($type)), $type);
+        }
+    }
+
+    private static function metadata(string $instrumentType): MetricMetadataInterface
+    {
+        $metadata = self::createStub(MetricMetadataInterface::class);
+        $metadata->method('instrumentType')->willReturn($instrumentType);
+
+        return $metadata;
     }
 }

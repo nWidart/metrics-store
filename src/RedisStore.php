@@ -27,6 +27,10 @@ use UnexpectedValueException;
  *   idx:{id}             set of the series keys of one metric
  *   s:{id}:{seriesKey}   hash of one series; a histogram series holds field b{i} per non-empty bucket
  *
+ * Every script takes the meta key as KEYS[1] and builds the other key names from it, never from
+ * an argument. A key prefix set on the client (phpredis OPT_PREFIX, the predis "prefix" option,
+ * Laravel's redis prefix) applies to KEYS[1] only, so this keeps every key under that prefix too.
+ *
  * Histograms keep bucket counts and the sum, not min and max: a min or max since the store
  * started says little, Prometheus ignores both, and OTLP makes them optional. Comparing them
  * cost about a fifth of the merge time.
@@ -42,7 +46,7 @@ final class RedisStore
     private const JSON_FLAGS = JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE;
 
     /**
-     * KEYS[1] = meta key, ARGV[1] = prefix, ARGV[2] = cardinality limit, then one block per metric:
+     * KEYS[1] = meta key, ARGV[1] = cardinality limit, then one block per metric:
      *   id, meta JSON, kind (s = sum, h = histogram, g = gauge), point count, then per point:
      *   sum        series key, attributes JSON, start timestamp, value field, value
      *   gauge      series key, attributes JSON, timestamp, value
@@ -56,10 +60,10 @@ final class RedisStore
      */
     private const MERGE_SCRIPT = <<<'LUA'
         local call = redis.call
-        local p = ARGV[1]
-        local limit = tonumber(ARGV[2])
+        local p = string.sub(KEYS[1], 1, -5)
+        local limit = tonumber(ARGV[1])
         local n = #ARGV
-        local i = 3
+        local i = 2
 
         -- Compares two non-negative integer strings without converting them to doubles.
         local function not_older(new, old)
@@ -119,36 +123,45 @@ final class RedisStore
         return 1
         LUA;
 
-    /** Returns {{id, meta, {series hash, ...}}, ...}. */
-    private const COLLECT_SCRIPT = <<<'LUA'
-        local p = ARGV[1]
-        local meta = redis.call('HGETALL', KEYS[1])
-        local out = {}
-        for i = 1, #meta, 2 do
-            local id = meta[i]
-            local series = {}
-            for _, sk in ipairs(redis.call('SMEMBERS', p .. 'idx:' .. id)) do
-                series[#series + 1] = redis.call('HGETALL', p .. 's:' .. id .. ':' .. sk)
-            end
-            out[#out + 1] = {id, meta[i + 1], series}
-        end
-        return out
+    /** Returns the meta hash: id, meta JSON, id, meta JSON, ... */
+    private const META_SCRIPT = <<<'LUA'
+        return redis.call('HGETALL', KEYS[1])
         LUA;
 
-    /** Every key the merge script writes is reachable from the meta hash. */
-    private const CLEAR_SCRIPT = <<<'LUA'
-        local p = ARGV[1]
-        local ids = redis.call('HKEYS', KEYS[1])
-        for _, id in ipairs(ids) do
-            local idx = p .. 'idx:' .. id
-            for _, sk in ipairs(redis.call('SMEMBERS', idx)) do
-                redis.call('DEL', p .. 's:' .. id .. ':' .. sk)
-            end
-            redis.call('DEL', idx)
+    /**
+     * ARGV[1] = metric id, ARGV[2] = SSCAN cursor, ARGV[3] = SSCAN count.
+     * Returns {next cursor, {series key, series hash, ...}}. SSCAN can return a series twice.
+     */
+    private const SERIES_SCRIPT = <<<'LUA'
+        local p = string.sub(KEYS[1], 1, -5)
+        local id = ARGV[1]
+        local scan = redis.call('SSCAN', p .. 'idx:' .. id, ARGV[2], 'COUNT', ARGV[3])
+        local out = {}
+        for _, sk in ipairs(scan[2]) do
+            out[#out + 1] = sk
+            out[#out + 1] = redis.call('HGETALL', p .. 's:' .. id .. ':' .. sk)
         end
-        redis.call('DEL', KEYS[1])
-        return #ids
+        return {scan[1], out}
         LUA;
+
+    /**
+     * ARGV[1] = metric id. Deletes every key of one metric, atomically: a merge that runs at the same
+     * time sees either the whole metric or none of it, so it cannot leave a series without its index.
+     */
+    private const CLEAR_METRIC_SCRIPT = <<<'LUA'
+        local p = string.sub(KEYS[1], 1, -5)
+        local id = ARGV[1]
+        local idx = p .. 'idx:' .. id
+        for _, sk in ipairs(redis.call('SMEMBERS', idx)) do
+            redis.call('DEL', p .. 's:' .. id .. ':' .. sk)
+        end
+        redis.call('DEL', idx)
+        redis.call('HDEL', KEYS[1], id)
+        return 1
+        LUA;
+
+    /** Series read per collect call, so that a large store never blocks Redis for long. */
+    private const COLLECT_CHUNK = 100;
 
     public function __construct(
         private readonly RedisClient $client,
@@ -175,32 +188,42 @@ final class RedisStore
         $this->client->evalScript(
             self::MERGE_SCRIPT,
             [$this->prefix.'meta'],
-            [$this->prefix, (string) $this->cardinalityLimit, ...$args],
+            [(string) $this->cardinalityLimit, ...$args],
         );
     }
 
     /**
-     * Reads every stored series as cumulative data, in one round trip.
+     * Reads every stored series as cumulative data. Each call to Redis reads one chunk of the
+     * series of one metric. Each series is read atomically; the store as a whole is not.
      *
      * @return list<Metric>
      */
     public function collect(ResourceInfo $resource): array
     {
-        $rows = $this->client->evalScript(self::COLLECT_SCRIPT, [$this->prefix.'meta'], [$this->prefix]);
+        $metaKey = [$this->prefix.'meta'];
         $now = Clock::getDefault()->now();
 
         $metrics = [];
-        foreach (self::list($rows) as $row) {
-            [, $metaJson, $series] = self::list($row) + [null, null, null];
+        foreach (array_chunk(self::list($this->client->evalScript(self::META_SCRIPT, $metaKey, [])), 2) as $pair) {
+            [$id, $metaJson] = $pair + [null, null];
+            $id = self::string($id);
             $meta = self::meta(self::string($metaJson));
 
             $hashes = [];
-            foreach (self::list($series) as $flat) {
-                $hashes[] = self::hash($flat);
-            }
+            $cursor = '0';
+            do {
+                [$cursor, $series] = self::list($this->client->evalScript(self::SERIES_SCRIPT, $metaKey, [$id, $cursor, (string) self::COLLECT_CHUNK])) + [null, null];
+                $cursor = self::string($cursor);
+                foreach (array_chunk(self::list($series), 2) as $entry) {
+                    [$seriesKey, $flat] = $entry + [null, null];
+                    $hashes[self::string($seriesKey)] = self::hash($flat);
+                }
+            } while ($cursor !== '0');
+
             if ($hashes === []) {
                 continue;
             }
+            $hashes = array_values($hashes);
 
             $metrics[] = new Metric(
                 new InstrumentationScope($meta['scope']['name'], $meta['scope']['version'], $meta['scope']['schemaUrl'], Attributes::create([])),
@@ -220,10 +243,16 @@ final class RedisStore
         return $metrics;
     }
 
-    /** Deletes every key under the prefix. */
+    /**
+     * Deletes every key under the prefix, one metric at a time. A metric that a merge creates
+     * while clear() runs can stay.
+     */
     public function clear(): void
     {
-        $this->client->evalScript(self::CLEAR_SCRIPT, [$this->prefix.'meta'], [$this->prefix]);
+        $metaKey = [$this->prefix.'meta'];
+        foreach (array_chunk(self::list($this->client->evalScript(self::META_SCRIPT, $metaKey, [])), 2) as $pair) {
+            $this->client->evalScript(self::CLEAR_METRIC_SCRIPT, $metaKey, [self::string($pair[0])]);
+        }
     }
 
     /**

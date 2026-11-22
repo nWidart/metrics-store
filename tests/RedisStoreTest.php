@@ -69,6 +69,12 @@ class RedisStoreTest extends TestCase
         return new PredisClient($client);
     }
 
+    /** A client whose own key prefix applies to every key it sends. */
+    protected function prefixedClient(string $prefix): RedisClient
+    {
+        return new PredisClient(new Client(['host' => self::host(), 'port' => self::port(), 'database' => 15], ['prefix' => $prefix]));
+    }
+
     /** Client name the concurrency worker uses. */
     protected function clientName(): string
     {
@@ -281,6 +287,66 @@ class RedisStoreTest extends TestCase
         ksort($byBounds);
 
         self::assertSame(['[1.0,2.0]' => [0, 1, 0], '[10.0,20.0,30.0]' => [0, 0, 1, 0]], $byBounds);
+    }
+
+    public function test_a_client_key_prefix_applies_to_every_key(): void
+    {
+        $raw = new Client(['host' => self::host(), 'port' => self::port(), 'database' => 15]);
+        $raw->del(...($raw->keys('clientprefix:*') ?: ['clientprefix:none']));
+        $store = new RedisStore($this->prefixedClient('clientprefix:'), self::PREFIX);
+
+        $this->request(function (MeterInterface $meter) {
+            $meter->createCounter('requests')->add(2, ['route' => '/']);
+            $meter->createHistogram('latency')->record(3.5);
+        }, $store);
+
+        $keys = $raw->keys('*'.self::PREFIX.'*');
+        self::assertNotEmpty($keys);
+        foreach ($keys as $key) {
+            self::assertStringStartsWith('clientprefix:'.self::PREFIX, $key);
+        }
+        $names = array_map(fn (Metric $metric) => $metric->name, $store->collect(ResourceInfoFactory::emptyResource()));
+        sort($names);
+        self::assertSame(['latency', 'requests'], $names);
+
+        $store->clear();
+        self::assertSame([], $raw->keys('clientprefix:*'));
+    }
+
+    public function test_collect_reads_a_metric_with_more_series_than_one_chunk(): void
+    {
+        $this->request(function (MeterInterface $meter) {
+            $counter = $meter->createCounter('requests');
+            for ($user = 0; $user < 250; $user++) {
+                $counter->add($user + 1, ['user' => $user]);
+            }
+        });
+
+        $points = $this->data('requests', Sum::class)->dataPoints;
+        $values = [];
+        foreach ($points as $point) {
+            self::assertInstanceOf(NumberDataPoint::class, $point);
+            $values[(int) $point->attributes->get('user')] = $point->value;
+        }
+        ksort($values);
+
+        self::assertCount(250, $points);
+        self::assertSame(range(1, 250), array_values($values));
+    }
+
+    public function test_observable_instruments_on_the_request_side_reach_neither_callback_nor_store(): void
+    {
+        $calls = 0;
+        $this->request(function (MeterInterface $meter) use (&$calls) {
+            $meter->createObservableCounter('cpu.time')->observe(function ($observer) use (&$calls) {
+                $calls++;
+                $observer->observe(100);
+            });
+            $meter->createCounter('requests')->add(1);
+        });
+
+        self::assertSame(0, $calls);
+        self::assertSame(['requests'], array_map(fn (Metric $metric) => $metric->name, $this->collect()));
     }
 
     public function test_collected_metrics_convert_to_otlp_as_cumulative(): void
