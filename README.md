@@ -198,6 +198,56 @@ Redis CPU per merge grows with the number of data points. A heavier workload of 
 
 Correctness was checked under the same load: 20,000 requests across 8 workers gave exactly 20,000 in Redis and in Prometheus, for every counter and every histogram.
 
+### Scaling to hundreds of metrics
+
+[`benchmarks/scale.php`](benchmarks/scale.php) measures how the store grows with the number of metrics and series. It ran in the same Docker setup, on PHP 8.4 CLI with opcache and phpredis, on the Docker network of Redis 7.4.
+
+**Merge.** One simulated request creates M instruments, records one value into each, with one attribute set, and flushes through `StoreExporter`. Times are averages per request. "Mixed" is half counters, a quarter histograms (14 buckets) and a quarter gauges. "Redis CPU, first merge" is the merge into an empty store, where every series is new.
+
+| Kind | Metrics | Record | Flush | Redis CPU | Redis CPU, first merge | Payload |
+|---|---:|---:|---:|---:|---:|---:|
+| counter | 10 | 88 µs | 133 µs | 29 µs | 151 µs | 2.8 KB |
+| counter | 100 | 0.76 ms | 0.84 ms | 0.22 ms | 0.55 ms | 28 KB |
+| counter | 250 | 2.0 ms | 1.9 ms | 0.55 ms | 1.0 ms | 70 KB |
+| counter | 500 | 3.6 ms | 3.2 ms | 1.0 ms | 2.1 ms | 140 KB |
+| counter | 1,000 | 7.7 ms | 7.9 ms | 2.2 ms | 4.7 ms | 279 KB |
+| counter | 2,000 | 14.9 ms | 12.8 ms | 4.0 ms | 7.8 ms | 560 KB |
+| histogram | 10 | 107 µs | 188 µs | 47 µs | 92 µs | 3.5 KB |
+| histogram | 100 | 1.0 ms | 1.4 ms | 0.44 ms | 0.53 ms | 35 KB |
+| histogram | 250 | 2.8 ms | 3.7 ms | 1.1 ms | 1.4 ms | 88 KB |
+| histogram | 500 | 5.3 ms | 6.8 ms | 2.3 ms | 2.6 ms | 177 KB |
+| histogram | 1,000 | 9.4 ms | 12.4 ms | 4.1 ms | 5.7 ms | 354 KB |
+| histogram | 2,000 | 21.7 ms | 29.2 ms | 8.7 ms | 10.2 ms | 709 KB |
+| mixed | 10 | 91 µs | 157 µs | 33 µs | 94 µs | 2.9 KB |
+| mixed | 100 | 0.79 ms | 1.0 ms | 0.28 ms | 0.50 ms | 30 KB |
+| mixed | 250 | 2.3 ms | 2.6 ms | 0.76 ms | 1.4 ms | 75 KB |
+| mixed | 500 | 4.5 ms | 4.6 ms | 1.5 ms | 2.5 ms | 149 KB |
+| mixed | 1,000 | 9.3 ms | 10.5 ms | 2.9 ms | 3.9 ms | 299 KB |
+| mixed | 2,000 | 19.5 ms | 19.4 ms | 5.7 ms | 8.4 ms | 598 KB |
+
+- The cost is linear in the number of data points. Redis CPU is about 2 µs per counter point and 4 µs per histogram point.
+- Most of the PHP time is the OpenTelemetry SDK. For 1,000 counters, creating the instruments takes 5.3 ms, recording 1.8 ms, and the SDK collection 2.8 ms. The store's own work, building the arguments and the round trip, takes 4.8 ms.
+- The payload is about 290 bytes per counter and 360 bytes per histogram. Every merge sends the metric description and the attributes, because the request does not know whether the series exists yet.
+- Redis runs one script at a time, so the merge's Redis CPU caps the request rate of one Redis instance. Summed over all hosts, that is about 2,000 to 4,500 merging requests per second at 100 metrics per request, and about 250 to 450 at 1,000, histograms being the expensive end.
+
+**Collect.** The store holds M metrics, mixed kinds, with S series each. "Collect" is `collect()`, "render" is `PrometheusTextFormat::render()`, as for one Prometheus scrape.
+
+| Metrics × series | Series | Collect | Render | Redis calls | Longest call | Redis CPU | Text | Redis memory per series |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 100 × 1 | 100 | 3.4 ms | 0.6 ms | 101 | 0.17 ms | 0.6 ms | 52 KB | 1,875 B |
+| 100 × 10 | 1,000 | 8.6 ms | 4.5 ms | 101 | 0.21 ms | 2.6 ms | 489 KB | 767 B |
+| 100 × 100 | 10,000 | 66 ms | 52 ms | 101 | 0.67 ms | 23 ms | 4.8 MB | 533 B |
+| 500 × 10 | 5,000 | 53 ms | 26 ms | 501 | 0.91 ms | 15 ms | 2.4 MB | 590 B |
+| 1,000 × 1 | 1,000 | 41 ms | 6.5 ms | 1,001 | 1.2 ms | 7.1 ms | 525 KB | 1,642 B |
+| 1,000 × 10 | 10,000 | 98 ms | 52 ms | 1,001 | 1.3 ms | 28 ms | 4.8 MB | 616 B |
+| 1,000 × 100 | 100,000 | 647 ms | 533 ms | 1,001 | 1.3 ms | 249 ms | 48 MB | 312 B |
+
+- A scrape of 100,000 series takes about 1.2 s and never blocks Redis for more than about 1.3 ms at a time.
+- Collection makes one call for the metric descriptions, then one call per metric and per 100 series.
+- Memory per series falls as series grow, because the metric description and the index set are shared. 100,000 series take about 30 MB.
+
+Below a few hundred data points per request, the merge stays well under a millisecond of Redis time. Past that, Redis throughput is the limit, not latency: plan the Redis capacity from the data points per request times the request rate.
+
 ### Keep the overhead low
 
 - **Use an optimized Composer autoloader in production**: `composer install --optimize-autoloader` or `composer dump-autoload -o`. Without it, booting the SDK takes about 1 ms instead of 75 µs.
@@ -230,6 +280,14 @@ composer analyse
 ```
 
 The tests use Redis database 15. Set `REDIS_HOST` and `REDIS_PORT` to use another server. The phpredis tests run when `ext-redis` is loaded; the predis tests always run.
+
+To run the scaling benchmark, which needs `ext-redis` and also uses database 15:
+
+```bash
+php -d opcache.enable_cli=1 -d memory_limit=4G benchmarks/scale.php [merge|collect|all]
+```
+
+Run it without Xdebug. Run it on the same network as Redis: through the Docker Desktop port forward, the round trip times mostly measure the forward.
 
 ## Changelog
 
