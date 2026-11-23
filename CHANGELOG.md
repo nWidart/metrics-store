@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.0 - 2026-11-23
+
+First stable release, with no code changes since 0.1.1. From this version on, the public API (the `MetricStore` contract, `RedisStore`, `InMemoryStore`, `StoreExporter` and `PrometheusTextFormat`) follows semantic versioning.
+
 ## 0.1.1 - 2026-11-22
 
 - Fixed: 0.1.0 required `nyholm/psr7` and `symfony/http-client ^5.4`, which the package does not use. Symfony 5.4 cannot be installed with Laravel 12 or 13.
